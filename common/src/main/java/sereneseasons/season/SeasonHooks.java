@@ -16,11 +16,20 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
 import sereneseasons.api.season.Season;
 import sereneseasons.api.season.SeasonHelper;
+import sereneseasons.config.SeasonsConfig;
 import sereneseasons.init.ModConfig;
 import sereneseasons.init.ModTags;
 
 public class SeasonHooks
 {
+    // Temperature scaling applied to a season's melt speed. Biome temperatures run from -0.5 to 2.0, so
+    // adding 0.5 turns the coldest biome into the floor and leaves 0.5 (a plains-like biome) near 1.0.
+    private static final float MIN_TEMPERATURE_MELT_FACTOR = 0.05F;
+    private static final float MAX_TEMPERATURE_MELT_FACTOR = 2.0F;
+
+    // Melting is faster while rain is falling on the snow.
+    private static final float RAIN_MELT_FACTOR = 1.75F;
+
     //
     // Hooks called by ASM
     //
@@ -86,6 +95,91 @@ public class SeasonHooks
             boolean shouldSnow = (ModConfig.seasons.generateSnowAndIce && coldEnoughToSnowSeasonal(level, pos, seaLevel)) || (!ModConfig.seasons.generateSnowAndIce && biome.coldEnoughToSnow(pos, seaLevel));
             return shouldSnow ? Biome.Precipitation.SNOW : Biome.Precipitation.RAIN;
         }
+    }
+
+    //
+    // Melting
+    //
+
+    /**
+     * Whether snow is actually falling on {@code pos} right now, as opposed to the season merely being cold
+     * enough for snow. Requires active weather, an open sky and the position to be at or above the surface.
+     */
+    public static boolean isSnowingAt(Level level, BlockPos pos)
+    {
+        if (!level.isRaining() || !level.canSeeSky(pos))
+        {
+            return false;
+        }
+
+        if (level.getHeightmapPos(Heightmap.Types.MOTION_BLOCKING, pos).getY() > pos.getY())
+        {
+            return false;
+        }
+
+        Holder<Biome> biome = level.getBiome(pos);
+
+        if (ModConfig.seasons.isDimensionWhitelisted(level.dimension()) && !biome.is(ModTags.Biomes.BLACKLISTED_BIOMES))
+        {
+            return getPrecipitationAtSeasonal(level, biome, pos, level.getSeaLevel()) == Biome.Precipitation.SNOW;
+        }
+
+        return biome.value().getPrecipitationAt(pos, level.getSeaLevel()) == Biome.Precipitation.SNOW;
+    }
+
+    /**
+     * How fast snow and ice should melt at {@code pos}, as a 0-1 multiplier to apply to whatever melting
+     * mechanism the caller owns. Zero means nothing may melt here at all.
+     * <p>
+     * The season sets the budget through its melt_speed. On top of that, colder biomes melt more slowly than
+     * warmer ones in the same season, and rain falling on the position speeds melting up. Melting is blocked
+     * outright during winter and, in every season, while snow is actively falling — a biome cold enough to
+     * snow in midsummer keeps its snow for as long as the snowfall lasts.
+     */
+    public static float getMeltSpeed(Level level, Holder<Biome> biome, BlockPos pos)
+    {
+        if (!ModConfig.seasons.generateSnowAndIce || !ModConfig.seasons.isDimensionWhitelisted(level.dimension()) || biome.is(ModTags.Biomes.BLACKLISTED_BIOMES))
+        {
+            return 0.0F;
+        }
+
+        Season.SubSeason subSeason = SeasonHelper.getSeasonState(level).getSubSeason();
+
+        if (subSeason.getSeason() == Season.WINTER)
+        {
+            return 0.0F;
+        }
+
+        SeasonsConfig.SeasonProperties seasonProperties = ModConfig.seasons.getSeasonProperties(subSeason);
+
+        if (seasonProperties == null || seasonProperties.meltSpeed() <= 0.0F)
+        {
+            return 0.0F;
+        }
+
+        if (isSnowingAt(level, pos))
+        {
+            return 0.0F;
+        }
+
+        float speed = seasonProperties.meltSpeed() / 100.0F;
+
+        // A colder biome holds its snow longer than a warmer one under the same season.
+        float temperature = getBiomeTemperature(level, biome, pos, level.getSeaLevel());
+        speed *= Mth.clamp(temperature + 0.5F, MIN_TEMPERATURE_MELT_FACTOR, MAX_TEMPERATURE_MELT_FACTOR);
+
+        // Rain falling on snow melts it faster than dry weather does.
+        if (level.isRainingAt(pos))
+        {
+            speed *= RAIN_MELT_FACTOR;
+        }
+
+        return Mth.clamp(speed, 0.0F, 1.0F);
+    }
+
+    public static float getMeltSpeed(Level level, BlockPos pos)
+    {
+        return getMeltSpeed(level, level.getBiome(pos), pos);
     }
 
     //

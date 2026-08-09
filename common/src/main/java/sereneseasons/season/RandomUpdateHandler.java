@@ -26,7 +26,6 @@ import sereneseasons.api.season.Season;
 import sereneseasons.api.season.SeasonHelper;
 import sereneseasons.config.SeasonsConfig;
 import sereneseasons.init.ModConfig;
-import sereneseasons.init.ModTags;
 
 import java.util.Collections;
 import java.util.List;
@@ -60,6 +59,16 @@ public class RandomUpdateHandler
 		else if (weatherData.isThundering()) weatherData.setThundering(false);
 	}
 
+	/**
+	 * Rolls against the melt speed for {@code pos}, which folds in the season, the biome temperature, whether
+	 * it is raining, and whether snow is currently falling. Returns false when melting is not allowed at all.
+	 */
+	private static boolean rollMeltSpeed(ServerLevel world, Holder<Biome> biome, BlockPos pos)
+	{
+		float meltSpeed = SeasonHooks.getMeltSpeed(world, biome, pos);
+		return meltSpeed > 0.0F && world.getRandom().nextFloat() < meltSpeed;
+	}
+
 	private static void meltInChunk(ChunkMap chunkMap, LevelChunk chunkIn, float meltChance)
 	{
 		ServerLevel world = chunkMap.level;
@@ -76,20 +85,14 @@ public class RandomUpdateHandler
 			Holder<Biome> biome = world.getBiome(topAirPos);
 			Holder<Biome> groundBiome = world.getBiome(topGroundPos);
 
-			if (!biome.is(ModTags.Biomes.BLACKLISTED_BIOMES) && SeasonHooks.getBiomeTemperature(world, biome, topGroundPos, world.getSeaLevel()) >= 0.15F)
+			if (aboveGroundState.getBlock() == Blocks.SNOW && rollMeltSpeed(world, biome, topAirPos))
 			{
-				if (aboveGroundState.getBlock() == Blocks.SNOW)
-				{
-					world.setBlockAndUpdate(topAirPos, Blocks.AIR.defaultBlockState());
-				}
+				world.setBlockAndUpdate(topAirPos, Blocks.AIR.defaultBlockState());
 			}
 
-			if (!groundBiome.is(ModTags.Biomes.BLACKLISTED_BIOMES) && SeasonHooks.getBiomeTemperature(world, groundBiome, topGroundPos, world.getSeaLevel()) >= 0.15F)
+			if (groundState.getBlock() == Blocks.ICE && rollMeltSpeed(world, groundBiome, topGroundPos))
 			{
-				if (groundState.getBlock() == Blocks.ICE)
-				{
-					((IceBlock) Blocks.ICE).melt(groundState, world, topGroundPos);
-				}
+				((IceBlock) Blocks.ICE).melt(groundState, world, topGroundPos);
 			}
 		}
 	}
