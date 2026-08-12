@@ -21,7 +21,9 @@ changelog {
 }
 
 ext {
-    mod_version = gradleutils.getTagOffsetVersion()
+    // mod_version_suffix marks a local build that is not an upstream release, so the jar name says which
+    // one it is. Bump it in gradle.properties when handing a new jar over. Empty for an upstream release.
+    mod_version = gradleutils.getTagOffsetVersion() + (project.findProperty('mod_version_suffix') ?: '')
     changelog_file = rootProject.file("build/changelog.txt")
     trimChangelog = (String text) -> {
         def m = text =~ /(?s) - (?:[0-9.]+) (.+?)(?=( - )|$)/
